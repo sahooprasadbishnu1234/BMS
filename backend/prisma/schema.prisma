@@ -1,0 +1,806 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -------------------------------------------------------------
+// 1. IDENTITY & ACCESS CONTROL
+// -------------------------------------------------------------
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  LOCKED
+  SUSPENDED
+}
+
+model User {
+  id                  String             @id @default(uuid())
+  email               String             @unique
+  passwordHash        String
+  firstName           String
+  lastName            String
+  phone               String?
+  status              UserStatus         @default(ACTIVE)
+  failedLoginAttempts Int                @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  userRoles           UserRole[]
+  refreshTokens       RefreshToken[]
+  employee            Employee?
+  customer            Customer?
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  supportMessages     SupportMessage[]
+  idempotencyRecords  IdempotencyRecord[]
+  makerApprovals      ApprovalRequest[]  @relation("MakerApprovals")
+  checkerApprovals    ApprovalRequest[]  @relation("CheckerApprovals")
+
+  @@index([email])
+}
+
+model Role {
+  id              String           @id @default(uuid())
+  name            String           @unique // e.g. CUSTOMER, BANK_MANAGER, etc.
+  description     String?
+  isSystem        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+}
+
+model Permission {
+  id              String           @id @default(uuid())
+  code            String           @unique // e.g. transfer:execute, account:read
+  module          String           // e.g. accounts, transactions
+  description     String?
+  createdAt       DateTime         @default(now())
+
+  rolePermissions RolePermission[]
+}
+
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+  createdAt    DateTime   @default(now())
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  family    String
+  isRevoked Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([family])
+}
+
+// -------------------------------------------------------------
+// 2. ORGANIZATIONAL STRUCTURE
+// -------------------------------------------------------------
+
+model Branch {
+  id            String               @id @default(uuid())
+  code          String               @unique // e.g. BR-001
+  name          String
+  address       String
+  city          String
+  state         String
+  routingNumber String               @unique
+  phone         String?
+  email         String?
+  isActive      Boolean              @default(true)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  employees     Employee[]
+  bankAccounts  BankAccount[]
+  reconciliations CashReconciliation[]
+  tellerSessions  TellerSession[]
+  loanApplications LoanApplication[]
+
+  @@index([code])
+}
+
+model Employee {
+  id             String               @id @default(uuid())
+  userId         String               @unique
+  branchId       String
+  employeeNumber String               @unique
+  jobTitle       String
+  department     String
+  isActive       Boolean              @default(true)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  branch         Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  tellerSessions TellerSession[]
+  reconciliations CashReconciliation[]
+  assignedTickets SupportTicket[]     @relation("AssignedTickets")
+  reviewedLoans  LoanApplication[]    @relation("ReviewedLoans")
+  complianceCases ComplianceCase[]
+
+  @@index([branchId])
+  @@index([employeeNumber])
+}
+
+enum KycStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model Customer {
+  id             String             @id @default(uuid())
+  userId         String             @unique
+  customerNumber String             @unique
+  kycStatus      KycStatus          @default(PENDING)
+  taxIdentifier  String?
+  dateOfBirth    DateTime?
+  occupation     String?
+  monthlyIncome  Decimal?           @db.Decimal(18, 4)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  user           User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  addresses      Address[]
+  bankAccounts   BankAccount[]
+  beneficiaries  AccountBeneficiary[]
+  loanApplications LoanApplication[]
+  supportTickets SupportTicket[]
+  complianceCases ComplianceCase[]
+
+  @@index([customerNumber])
+  @@index([kycStatus])
+}
+
+model Address {
+  id           String   @id @default(uuid())
+  customerId   String
+  street       String
+  city         String
+  state        String
+  postalCode   String
+  country      String   @default("United States")
+  addressType  String   @default("RESIDENTIAL") // RESIDENTIAL | MAILING
+  createdAt    DateTime @default(now())
+
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+// -------------------------------------------------------------
+// 3. BANK ACCOUNTS & BENEFICIARIES
+// -------------------------------------------------------------
+
+enum AccountType {
+  SAVINGS
+  CURRENT
+}
+
+enum AccountStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+model BankAccount {
+  id               String               @id @default(uuid())
+  accountNumber    String               @unique
+  customerId       String
+  branchId         String
+  accountType      AccountType          @default(SAVINGS)
+  status           AccountStatus        @default(ACTIVE)
+  balance          Decimal              @default(0.0000) @db.Decimal(18, 4)
+  availableBalance Decimal              @default(0.0000) @db.Decimal(18, 4)
+  currency         String               @default("USD")
+  overdraftLimit   Decimal              @default(0.0000) @db.Decimal(18, 4)
+  openedAt         DateTime             @default(now())
+  closedAt         DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  customer         Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch           Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  sourceTxns       Transaction[]        @relation("SourceAccount")
+  destTxns         Transaction[]        @relation("DestinationAccount")
+  beneficiaryOf    AccountBeneficiary[]
+  loanAccounts     LoanAccount[]
+
+  @@index([accountNumber])
+  @@index([customerId])
+  @@index([branchId])
+  @@index([status])
+}
+
+model AccountBeneficiary {
+  id                     String      @id @default(uuid())
+  customerId             String
+  beneficiaryAccountId   String
+  nickname               String?
+  isActive               Boolean     @default(true)
+  createdAt              DateTime    @default(now())
+
+  customer               Customer    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  beneficiaryAccount     BankAccount @relation(fields: [beneficiaryAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([customerId, beneficiaryAccountId])
+  @@index([customerId])
+}
+
+// -------------------------------------------------------------
+// 4. TRANSACTIONS & TELLER OPERATIONS
+// -------------------------------------------------------------
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  LOAN_DISBURSEMENT
+  LOAN_REPAYMENT
+  FEE
+  INTEREST
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+  REJECTED
+}
+
+model Transaction {
+  id                     String             @id @default(uuid())
+  referenceNumber        String             @unique
+  sourceAccountId        String?
+  destinationAccountId   String?
+  tellerSessionId        String?
+  transactionType        TransactionType
+  amount                 Decimal            @db.Decimal(18, 4)
+  fee                    Decimal            @default(0.0000) @db.Decimal(18, 4)
+  currency               String             @default("USD")
+  status                 TransactionStatus  @default(COMPLETED)
+  description            String?
+  idempotencyKey         String?            @unique
+  failureReason          String?
+  metadata               Json?
+  executedAt             DateTime           @default(now())
+  createdAt              DateTime           @default(now())
+
+  sourceAccount          BankAccount?       @relation("SourceAccount", fields: [sourceAccountId], references: [id], onDelete: Restrict)
+  destinationAccount     BankAccount?       @relation("DestinationAccount", fields: [destinationAccountId], references: [id], onDelete: Restrict)
+  tellerSession          TellerSession?     @relation(fields: [tellerSessionId], references: [id], onDelete: SetNull)
+  journalEntry           JournalEntry?
+  complianceCases        ComplianceCase[]
+
+  @@index([referenceNumber])
+  @@index([sourceAccountId])
+  @@index([destinationAccountId])
+  @@index([transactionType])
+  @@index([status])
+  @@index([executedAt])
+}
+
+enum TellerSessionStatus {
+  OPEN
+  CLOSED
+  RECONCILED
+}
+
+model TellerSession {
+  id             String               @id @default(uuid())
+  tellerId       String
+  branchId       String
+  openingCash    Decimal              @db.Decimal(18, 4)
+  closingCash    Decimal?             @db.Decimal(18, 4)
+  expectedCash   Decimal              @default(0.0000) @db.Decimal(18, 4)
+  cashDifference Decimal?             @db.Decimal(18, 4)
+  status         TellerSessionStatus  @default(OPEN)
+  openedAt       DateTime             @default(now())
+  closedAt       DateTime?
+  notes          String?
+
+  teller         Employee             @relation(fields: [tellerId], references: [id], onDelete: Restrict)
+  branch         Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  transactions   Transaction[]
+  reconciliation CashReconciliation?
+
+  @@index([tellerId])
+  @@index([branchId])
+  @@index([status])
+}
+
+enum ReconciliationStatus {
+  BALANCED
+  DISCREPANCY
+  APPROVED
+  REJECTED
+}
+
+model CashReconciliation {
+  id               String               @id @default(uuid())
+  tellerSessionId  String               @unique
+  branchId         String
+  verifiedById     String?
+  declaredAmount   Decimal              @db.Decimal(18, 4)
+  systemAmount     Decimal              @db.Decimal(18, 4)
+  discrepancy      Decimal              @db.Decimal(18, 4)
+  status           ReconciliationStatus @default(BALANCED)
+  managerNotes     String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  tellerSession    TellerSession        @relation(fields: [tellerSessionId], references: [id], onDelete: Restrict)
+  branch           Branch               @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  verifiedBy       Employee?            @relation(fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([branchId])
+  @@index([status])
+}
+
+// -------------------------------------------------------------
+// 5. DOUBLE-ENTRY GENERAL LEDGER
+// -------------------------------------------------------------
+
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+model LedgerAccount {
+  id             String            @id @default(uuid())
+  code           String            @unique // e.g. 1010, 2010
+  name           String
+  accountType    LedgerAccountType
+  currentBalance Decimal           @default(0.0000) @db.Decimal(18, 4)
+  description    String?
+  isActive       Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  journalLines   JournalLine[]
+
+  @@index([code])
+  @@index([accountType])
+}
+
+model JournalEntry {
+  id            String        @id @default(uuid())
+  entryNumber   String        @unique // e.g. JE-2026-0001
+  transactionId String?       @unique
+  description   String
+  postingDate   DateTime      @default(now())
+  isBalanced    Boolean       @default(true)
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+
+  transaction   Transaction?  @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  journalLines  JournalLine[]
+
+  @@index([entryNumber])
+  @@index([postingDate])
+}
+
+enum EntryType {
+  DEBIT
+  CREDIT
+}
+
+model JournalLine {
+  id              String         @id @default(uuid())
+  journalEntryId  String
+  ledgerAccountId String
+  entryType       EntryType
+  amount          Decimal        @db.Decimal(18, 4)
+  memo            String?
+  createdAt       DateTime       @default(now())
+
+  journalEntry    JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  ledgerAccount   LedgerAccount  @relation(fields: [ledgerAccountId], references: [id], onDelete: Restrict)
+
+  @@index([journalEntryId])
+  @@index([ledgerAccountId])
+  @@index([entryType])
+}
+
+// -------------------------------------------------------------
+// 6. MAKER-CHECKER APPROVAL SYSTEM
+// -------------------------------------------------------------
+
+enum ApprovalEntityType {
+  TRANSACTION
+  LOAN
+  ACCOUNT_STATUS
+  LEDGER_ADJUSTMENT
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+model ApprovalRequest {
+  id            String             @id @default(uuid())
+  entityType    ApprovalEntityType
+  entityId      String
+  action        String             // e.g. APPROVE_HIGH_VALUE_TRANSFER, DISBURSE_LOAN
+  makerId       String
+  checkerId     String?
+  status        ApprovalStatus     @default(PENDING)
+  monetaryValue Decimal?           @db.Decimal(18, 4)
+  reason        String
+  reviewNotes   String?
+  reviewedAt    DateTime?
+  expiresAt     DateTime?
+  payload       Json?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  maker         User               @relation("MakerApprovals", fields: [makerId], references: [id], onDelete: Restrict)
+  checker       User?              @relation("CheckerApprovals", fields: [checkerId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([makerId])
+  @@index([checkerId])
+  @@index([entityType, entityId])
+}
+
+// -------------------------------------------------------------
+// 7. LOAN MANAGEMENT
+// -------------------------------------------------------------
+
+enum InterestMethod {
+  REDUCING_BALANCE
+  FLAT
+}
+
+model LoanProduct {
+  id                 String            @id @default(uuid())
+  code               String            @unique // e.g. HOME-01, AUTO-01, PERS-01
+  name               String
+  description        String?
+  minAmount          Decimal           @db.Decimal(18, 4)
+  maxAmount          Decimal           @db.Decimal(18, 4)
+  annualInterestRate Decimal           @db.Decimal(5, 2)
+  interestMethod     InterestMethod    @default(REDUCING_BALANCE)
+  minTenureMonths    Int
+  maxTenureMonths    Int
+  isActive           Boolean           @default(true)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  applications       LoanApplication[]
+
+  @@index([code])
+}
+
+enum LoanApplicationStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  RECOMMENDED
+  APPROVED
+  REJECTED
+  DISBURSED
+}
+
+model LoanApplication {
+  id                  String                @id @default(uuid())
+  applicationNumber   String                @unique // e.g. LN-APP-2026-0001
+  customerId          String
+  loanProductId       String
+  branchId            String
+  requestedAmount     Decimal               @db.Decimal(18, 4)
+  tenureMonths        Int
+  purpose             String
+  monthlyIncome       Decimal               @db.Decimal(18, 4)
+  creditScore         Int?
+  status              LoanApplicationStatus @default(SUBMITTED)
+  assignedOfficerId   String?
+  recommendationNotes String?
+  rejectionReason     String?
+  submittedAt         DateTime              @default(now())
+  reviewedAt          DateTime?
+  updatedAt           DateTime              @updatedAt
+
+  customer            Customer              @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  loanProduct         LoanProduct           @relation(fields: [loanProductId], references: [id], onDelete: Restrict)
+  branch              Branch                @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  assignedOfficer     Employee?             @relation("ReviewedLoans", fields: [assignedOfficerId], references: [id], onDelete: SetNull)
+  documents           LoanDocument[]
+  loanAccount         LoanAccount?
+
+  @@index([applicationNumber])
+  @@index([customerId])
+  @@index([status])
+  @@index([branchId])
+}
+
+model LoanDocument {
+  id                String          @id @default(uuid())
+  loanApplicationId String
+  documentType      String          // e.g. PAYSLIP, TAX_RETURN, ID_CARD
+  documentName      String
+  fileUrl           String
+  fileSize          Int
+  mimeType          String
+  isVerified        Boolean         @default(false)
+  uploadedAt        DateTime        @default(now())
+
+  loanApplication   LoanApplication @relation(fields: [loanApplicationId], references: [id], onDelete: Cascade)
+
+  @@index([loanApplicationId])
+}
+
+enum LoanAccountStatus {
+  ACTIVE
+  CLOSED
+  DEFAULTED
+}
+
+model LoanAccount {
+  id                 String            @id @default(uuid())
+  loanNumber         String            @unique // e.g. LA-2026-0001
+  applicationId      String            @unique
+  bankAccountId      String
+  principalAmount    Decimal           @db.Decimal(18, 4)
+  interestRate       Decimal           @db.Decimal(5, 2)
+  outstandingBalance Decimal           @db.Decimal(18, 4)
+  totalTenureMonths  Int
+  monthlyInstallment Decimal           @db.Decimal(18, 4)
+  startDate          DateTime          @default(now())
+  maturityDate       DateTime
+  status             LoanAccountStatus @default(ACTIVE)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  application        LoanApplication   @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  bankAccount        BankAccount       @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  repayments         LoanRepayment[]
+
+  @@index([loanNumber])
+  @@index([status])
+}
+
+enum RepaymentStatus {
+  SCHEDULED
+  PAID
+  OVERDUE
+  PARTIALLY_PAID
+}
+
+model LoanRepayment {
+  id                String          @id @default(uuid())
+  loanAccountId     String
+  installmentNumber Int
+  dueDate           DateTime
+  paidDate          DateTime?
+  principalDue      Decimal         @db.Decimal(18, 4)
+  interestDue       Decimal         @db.Decimal(18, 4)
+  totalDue          Decimal         @db.Decimal(18, 4)
+  amountPaid        Decimal         @default(0.0000) @db.Decimal(18, 4)
+  status            RepaymentStatus @default(SCHEDULED)
+  createdAt         DateTime        @default(now())
+
+  loanAccount       LoanAccount     @relation(fields: [loanAccountId], references: [id], onDelete: Cascade)
+
+  @@index([loanAccountId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+// -------------------------------------------------------------
+// 8. CUSTOMER SERVICE & TICKETING
+// -------------------------------------------------------------
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+model SupportTicket {
+  id                 String           @id @default(uuid())
+  ticketNumber       String           @unique // e.g. TKT-2026-0001
+  customerId         String
+  assignedEmployeeId String?
+  subject            String
+  category           String           // e.g. TRANSACTION_DISPUTE, CARD_LOST, GENERAL
+  priority           TicketPriority   @default(MEDIUM)
+  status             TicketStatus     @default(OPEN)
+  internalNotes      String?
+  resolvedAt         DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  customer           Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  assignedEmployee   Employee?        @relation("AssignedTickets", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  messages           SupportMessage[]
+
+  @@index([ticketNumber])
+  @@index([customerId])
+  @@index([status])
+  @@index([priority])
+}
+
+model SupportMessage {
+  id         String        @id @default(uuid())
+  ticketId   String
+  senderId   String
+  message    String
+  isInternal Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender     User          @relation(fields: [senderId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId])
+  @@index([senderId])
+}
+
+// -------------------------------------------------------------
+// 9. NOTIFICATIONS, AUDIT & COMPLIANCE
+// -------------------------------------------------------------
+
+enum NotificationType {
+  TRANSACTION
+  SECURITY
+  LOAN
+  APPROVAL
+  SUPPORT
+  GENERAL
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      NotificationType @default(GENERAL)
+  isRead    Boolean          @default(false)
+  linkUrl   String?
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  actorId        String?
+  action         String   // e.g. LOGIN_SUCCESS, TRANSFER_EXECUTED, APPROVAL_GRANTED
+  targetEntity   String   // e.g. BankAccount, Transaction, User
+  targetEntityId String?
+  ipAddress      String?
+  userAgent      String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  actor          User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([targetEntity])
+  @@index([createdAt])
+}
+
+enum ComplianceSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ComplianceStatus {
+  OPEN
+  INVESTIGATING
+  CLEARED
+  ESCALATED
+  REPORTED_SAR
+}
+
+model ComplianceCase {
+  id             String             @id @default(uuid())
+  caseNumber     String             @unique // e.g. CMP-2026-0001
+  customerId     String?
+  transactionId  String?
+  alertType      String             // LARGE_CASH, UNUSUAL_VELOCITY, OFAC_MATCH
+  severity       ComplianceSeverity @default(MEDIUM)
+  status         ComplianceStatus   @default(OPEN)
+  investigatorId String?
+  findings       String?
+  actionsTaken   String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  customer       Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  transaction    Transaction?       @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  investigator   Employee?          @relation(fields: [investigatorId], references: [id], onDelete: SetNull)
+
+  @@index([caseNumber])
+  @@index([status])
+  @@index([severity])
+  @@index([alertType])
+}
+
+// -------------------------------------------------------------
+// 10. IDEMPOTENCY & CONCURRENCY
+// -------------------------------------------------------------
+
+model IdempotencyRecord {
+  id           String   @id @default(uuid())
+  key          String   @unique
+  userId       String
+  method       String
+  endpoint     String
+  statusCode   Int
+  responseBody Json
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([key])
+  @@index([userId])
+  @@index([expiresAt])
+}
