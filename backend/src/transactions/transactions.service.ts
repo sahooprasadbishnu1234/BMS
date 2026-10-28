@@ -136,7 +136,9 @@ export class TransactionsService {
       }
 
       const newBalance = new Decimal(account.balance).plus(depositAmount);
-      const newAvail = new Decimal(account.availableBalance).plus(depositAmount);
+      const newAvail = account.accountType === 'SAVINGS'
+        ? Decimal.max(0, newBalance.minus(500))
+        : newBalance;
 
       const updatedAccount = await tx.bankAccount.update({
         where: { id: account.id },
@@ -280,15 +282,26 @@ export class TransactionsService {
         throw new BadRequestException(`Account is ${account.status}. Withdrawals not permitted.`);
       }
 
-      const currentAvail = new Decimal(account.availableBalance);
-      if (currentAvail.lessThan(withdrawAmount)) {
-        throw new BadRequestException(
-          `Insufficient funds: Available balance is $${currentAvail.toFixed(2)}, requested $${withdrawAmount.toFixed(2)}.`,
-        );
+      const minRequired = account.accountType === 'SAVINGS' ? new Decimal(500) : new Decimal(0);
+      const currentBalance = new Decimal(account.balance);
+      const maxWithdrawable = Decimal.max(0, currentBalance.minus(minRequired));
+
+      if (withdrawAmount.greaterThan(maxWithdrawable)) {
+        if (account.accountType === 'SAVINGS') {
+          throw new BadRequestException(
+            `Minimum balance requirement: ₹500.00 must always be maintained in your Savings Account. Your current balance is ₹${currentBalance.toFixed(2)}, so maximum withdrawable amount is ₹${maxWithdrawable.toFixed(2)}.`,
+          );
+        } else {
+          throw new BadRequestException(
+            `Insufficient funds: Available balance is ₹${maxWithdrawable.toFixed(2)}, requested ₹${withdrawAmount.toFixed(2)}.`,
+          );
+        }
       }
 
-      const newBalance = new Decimal(account.balance).minus(withdrawAmount);
-      const newAvail = currentAvail.minus(withdrawAmount);
+      const newBalance = currentBalance.minus(withdrawAmount);
+      const newAvail = account.accountType === 'SAVINGS'
+        ? Decimal.max(0, newBalance.minus(500))
+        : newBalance;
 
       await tx.bankAccount.update({
         where: { id: account.id },
@@ -499,16 +512,28 @@ export class TransactionsService {
         throw new NotFoundException('Accounts locked could not be retrieved.');
       }
 
-      const avail = new Decimal(freshSource.availableBalance);
-      if (avail.lessThan(transferAmount)) {
-        throw new BadRequestException(
-          `Insufficient funds: Available balance is $${avail.toFixed(2)}, required $${transferAmount.toFixed(2)}.`,
-        );
+      const minRequired = freshSource.accountType === 'SAVINGS' ? new Decimal(500) : new Decimal(0);
+      const currentSourceBal = new Decimal(freshSource.balance);
+      const maxTransferable = Decimal.max(0, currentSourceBal.minus(minRequired));
+
+      if (transferAmount.greaterThan(maxTransferable)) {
+        if (freshSource.accountType === 'SAVINGS') {
+          throw new BadRequestException(
+            `Minimum balance requirement: ₹500.00 must always be maintained in your Savings Account. Your current balance is ₹${currentSourceBal.toFixed(2)}, so maximum transferable amount is ₹${maxTransferable.toFixed(2)}.`,
+          );
+        } else {
+          throw new BadRequestException(
+            `Insufficient funds: Available balance is ₹${maxTransferable.toFixed(2)}, required ₹${transferAmount.toFixed(2)}.`,
+          );
+        }
       }
 
-      // Deduct source
-      const newSourceBal = new Decimal(freshSource.balance).minus(transferAmount);
-      const newSourceAvail = avail.minus(transferAmount);
+      // Deduct source (maintaining 500 reserve if SAVINGS)
+      const newSourceBal = currentSourceBal.minus(transferAmount);
+      const newSourceAvail = freshSource.accountType === 'SAVINGS'
+        ? Decimal.max(0, newSourceBal.minus(500))
+        : newSourceBal;
+
       await tx.bankAccount.update({
         where: { id: freshSource.id },
         data: {
@@ -519,7 +544,10 @@ export class TransactionsService {
 
       // Credit destination
       const newDestBal = new Decimal(freshDest.balance).plus(transferAmount);
-      const newDestAvail = new Decimal(freshDest.availableBalance).plus(transferAmount);
+      const newDestAvail = freshDest.accountType === 'SAVINGS'
+        ? Decimal.max(0, newDestBal.minus(500))
+        : newDestBal;
+
       await tx.bankAccount.update({
         where: { id: freshDest.id },
         data: {

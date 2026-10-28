@@ -69,11 +69,6 @@ export class AccountsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    return this.accountsService.getStatement(
-      id,
-      user,
-      startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined,
-    );
+    return this.accountsService.getStatement(id, user, startDate, endDate);
   }
 }

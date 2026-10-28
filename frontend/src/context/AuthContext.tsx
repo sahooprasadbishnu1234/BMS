@@ -8,6 +8,8 @@ interface AuthContextType {
   setActiveRole: (role: RoleName) => void;
   login: (email: string, password: string) => Promise<User>;
   demoLogin: (roleName: RoleName) => Promise<User>;
+  quickCustomerLogin: (email: string) => Promise<User>;
+  setAuthData: (userData: User, accessToken: string, refreshToken: string) => void;
   logout: () => void;
   isLoading: boolean;
 }
@@ -81,7 +83,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const demoLogin = async (roleName: RoleName) => {
     const email = DEMO_CREDENTIALS[roleName];
-    return login(email, 'Password123!');
+    try {
+      return await login(email, 'Password123!');
+    } catch (err) {
+      if (roleName === 'CUSTOMER') {
+        return await quickCustomerLogin(email);
+      }
+      throw err;
+    }
+  };
+
+  const quickCustomerLogin = async (email: string) => {
+    setIsLoading(true);
+    try {
+      const res = await api.post('/auth/customer-quick-login', { email });
+      const { user: userData, accessToken, refreshToken } = res.data;
+      setAuthData(userData, accessToken, refreshToken);
+      return userData;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const setAuthData = (userData: User, accessToken: string, refreshToken: string) => {
+    localStorage.setItem('bms_access_token', accessToken);
+    localStorage.setItem('bms_refresh_token', refreshToken);
+    setUser(userData);
+    const role = (userData.roles?.[0] as RoleName) || 'CUSTOMER';
+    setActiveRole(role);
+    localStorage.setItem('bms_active_role', role);
   };
 
   const logout = () => {
@@ -106,6 +136,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setActiveRole: handleSetActiveRole,
         login,
         demoLogin,
+        quickCustomerLogin,
+        setAuthData,
         logout,
         isLoading,
       }}

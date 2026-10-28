@@ -63,8 +63,8 @@ describe('BMS Banking Core Engine & Financial Algorithms', () => {
     });
 
     it('should authorize approval when maker and checker are distinct authorized users', () => {
-      const makerId = 'user-uuid-teller-01';
-      const checkerId = 'user-uuid-manager-02';
+      const makerId: string = 'user-uuid-teller-01';
+      const checkerId: string = 'user-uuid-manager-02';
 
       const isAuthorized = makerId !== checkerId;
       expect(isAuthorized).toBe(true);

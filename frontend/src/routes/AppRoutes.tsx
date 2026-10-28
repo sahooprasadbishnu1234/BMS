@@ -1,9 +1,10 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Shell } from '../components/layout/Shell';
 import { Login } from '../pages/auth/Login';
 import { Register } from '../pages/auth/Register';
+import { CustomerManagement } from '../pages/customer-management/CustomerManagement';
 
 // 10 Role Dashboards
 import { CustomerDashboard } from '../pages/customer/CustomerDashboard';
@@ -19,6 +20,7 @@ import { ComplianceDashboard } from '../pages/compliance/ComplianceDashboard';
 
 export const AppRoutes: React.FC = () => {
   const { user, activeRole, isLoading } = useAuth();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -34,6 +36,11 @@ export const AppRoutes: React.FC = () => {
   }
 
   const renderRoleDashboard = () => {
+    // Dedicated customer management hub for staff
+    if (location.pathname === '/customers' && activeRole !== 'CUSTOMER') {
+      return <CustomerManagement />;
+    }
+
     switch (activeRole) {
       case 'CUSTOMER':
         return <CustomerDashboard />;

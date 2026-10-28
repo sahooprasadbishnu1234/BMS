@@ -15,6 +15,7 @@ import { AuditModule } from './audit/audit.module';
 import { ComplianceModule } from './compliance/compliance.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReportsModule } from './reports/reports.module';
+import { CustomersModule } from './customers/customers.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ReportsModule } from './reports/reports.module';
     PrismaModule,
     AuthModule,
     UsersModule,
+    CustomersModule,
     BranchesModule,
     AccountsModule,
     TransactionsModule,

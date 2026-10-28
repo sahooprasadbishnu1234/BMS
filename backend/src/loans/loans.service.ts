@@ -14,6 +14,7 @@ import {
   EntryType,
   LoanAccountStatus,
   LoanApplicationStatus,
+  NotificationType,
   RepaymentStatus,
   TransactionStatus,
   TransactionType,
@@ -115,12 +116,20 @@ export class LoansService {
       throw new BadRequestException('Only registered retail banking customers can apply for loans.');
     }
 
-    const product = await this.prisma.loanProduct.findUnique({
-      where: { code: dto.loanProductCode },
-    });
+    if (!dto.loanProductCode && !dto.loanProductId) {
+      throw new BadRequestException('Either loanProductCode or loanProductId must be provided.');
+    }
+
+    const product = dto.loanProductCode
+      ? await this.prisma.loanProduct.findUnique({
+          where: { code: dto.loanProductCode },
+        })
+      : await this.prisma.loanProduct.findUnique({
+          where: { id: dto.loanProductId },
+        });
 
     if (!product || !product.isActive) {
-      throw new NotFoundException(`Loan product ${dto.loanProductCode} is not available.`);
+      throw new NotFoundException(`Loan product ${dto.loanProductCode || dto.loanProductId} is not available.`);
     }
 
     const reqAmt = new Decimal(dto.requestedAmount);
@@ -231,33 +240,53 @@ export class LoansService {
   async approve(id: string, user: AuthenticatedUser) {
     const app = await this.prisma.loanApplication.findUnique({
       where: { id },
-      include: { loanProduct: true },
+      include: {
+        loanProduct: true,
+        customer: { include: { bankAccounts: true } },
+      },
     });
 
     if (!app) {
       throw new NotFoundException(`Loan application ${id} not found.`);
     }
 
-    if (app.status !== LoanApplicationStatus.RECOMMENDED) {
-      throw new BadRequestException('Loan application must be assessed and recommended by an officer first.');
+    if (app.status === LoanApplicationStatus.DISBURSED) {
+      throw new BadRequestException('This loan application has already been approved and disbursed.');
     }
 
-    const updated = await this.prisma.loanApplication.update({
+    if (
+      app.status !== LoanApplicationStatus.RECOMMENDED &&
+      app.status !== LoanApplicationStatus.SUBMITTED &&
+      app.status !== LoanApplicationStatus.UNDER_REVIEW &&
+      app.status !== LoanApplicationStatus.APPROVED
+    ) {
+      throw new BadRequestException(
+        `Application cannot be approved from status ${app.status}. Current status is invalid for approval.`,
+      );
+    }
+
+    // Mark as approved first
+    await this.prisma.loanApplication.update({
       where: { id },
-      data: { status: LoanApplicationStatus.APPROVED },
+      data: {
+        status: LoanApplicationStatus.APPROVED,
+        assignedOfficerId: user.employeeId || app.assignedOfficerId,
+        reviewedAt: new Date(),
+      },
     });
 
     await this.prisma.auditLog.create({
       data: {
         actorId: user.userId,
-        action: 'LOAN_APPROVED_BY_MANAGER',
+        action: 'LOAN_APPROVED_BY_OFFICER',
         targetEntity: 'LoanApplication',
         targetEntityId: id,
-        metadata: { managerId: user.userId },
+        metadata: { approverId: user.userId, approverRole: user.roles },
       },
     });
 
-    return updated;
+    // Automatically disburse and credit customer's account immediately
+    return this.disburse(id, user);
   }
 
   async disburse(id: string, user: AuthenticatedUser) {
@@ -273,8 +302,8 @@ export class LoansService {
       throw new NotFoundException(`Loan application ${id} not found.`);
     }
 
-    if (app.status !== LoanApplicationStatus.APPROVED) {
-      throw new BadRequestException(`Application must be APPROVED before disbursement. Current: ${app.status}.`);
+    if (app.status === LoanApplicationStatus.DISBURSED) {
+      throw new BadRequestException('Loan is already disbursed.');
     }
 
     const targetAccount = app.customer.bankAccounts[0];
@@ -338,9 +367,12 @@ export class LoansService {
         });
       }
 
-      // 3. Credit customer account with principal
+      // 3. Credit customer account with principal (respecting ₹500 minimum reserve for SAVINGS)
       const newBal = new Decimal(targetAccount.balance).plus(P);
-      const newAvail = new Decimal(targetAccount.availableBalance).plus(P);
+      const newAvail = targetAccount.accountType === 'SAVINGS'
+        ? Decimal.max(0, newBal.minus(500))
+        : newBal;
+
       await tx.bankAccount.update({
         where: { id: targetAccount.id },
         data: {
@@ -401,6 +433,16 @@ export class LoansService {
         data: { status: LoanApplicationStatus.DISBURSED },
       });
 
+      // 7. Send notification to customer
+      await tx.notification.create({
+        data: {
+          userId: app.customer.userId,
+          title: 'Loan Approved & Credited!',
+          message: `Your credit facility #${app.applicationNumber} of ₹${P.toFixed(2)} has been approved. ₹${P.toFixed(2)} has been automatically credited to your account ${targetAccount.accountNumber}.`,
+          type: NotificationType.LOAN,
+        },
+      });
+
       await tx.auditLog.create({
         data: {
           actorId: user.userId,
@@ -416,9 +458,11 @@ export class LoansService {
       });
 
       return {
+        message: `Loan approved successfully! ₹${P.toFixed(2)} has been automatically credited to account ${targetAccount.accountNumber}.`,
         loanAccount,
         monthlyInstallment: emi.toFixed(2),
         accountCredited: targetAccount.accountNumber,
+        creditedAmount: P.toFixed(2),
         newBalance: newBal.toFixed(2),
       };
     });

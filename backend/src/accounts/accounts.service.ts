@@ -158,7 +158,19 @@ export class AccountsService {
 
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const accountNumber = `100500${randomSuffix}${Math.floor(10 + Math.random() * 90)}`;
-    const depositAmount = createDto.initialDeposit || 0;
+    const isSavings = createDto.accountType === 'SAVINGS';
+    const depositAmount = createDto.initialDeposit !== undefined
+      ? Number(createDto.initialDeposit)
+      : (isSavings ? 500 : 0);
+
+    if (isSavings && depositAmount < 500) {
+      throw new BadRequestException('A minimum initial deposit of ₹500.00 is required to open a Savings Account.');
+    }
+    if (!isSavings && depositAmount < 0) {
+      throw new BadRequestException('Initial deposit for a Current Account cannot be negative.');
+    }
+
+    const availableAmount = isSavings ? Math.max(0, depositAmount - 500) : depositAmount;
 
     return this.prisma.$transaction(async (tx) => {
       const account = await tx.bankAccount.create({
@@ -169,7 +181,7 @@ export class AccountsService {
           accountType: createDto.accountType,
           status: AccountStatus.ACTIVE,
           balance: depositAmount.toFixed(4),
-          availableBalance: depositAmount.toFixed(4),
+          availableBalance: availableAmount.toFixed(4),
         },
       });
 
@@ -255,7 +267,12 @@ export class AccountsService {
     return updated;
   }
 
-  async getStatement(id: string, user: AuthenticatedUser, startDate?: Date, endDate?: Date) {
+  async getStatement(
+    id: string,
+    user: AuthenticatedUser,
+    startDate?: string | Date,
+    endDate?: string | Date,
+  ) {
     const account = await this.findOne(id, user);
 
     const whereTx: any = {
@@ -265,8 +282,22 @@ export class AccountsService {
 
     if (startDate || endDate) {
       whereTx.executedAt = {};
-      if (startDate) whereTx.executedAt.gte = startDate;
-      if (endDate) whereTx.executedAt.lte = endDate;
+      if (startDate) {
+        const start = typeof startDate === 'string' ? new Date(startDate) : new Date(startDate.getTime());
+        if (typeof startDate === 'string' && !startDate.includes('T')) {
+          start.setUTCHours(0, 0, 0, 0);
+        }
+        whereTx.executedAt.gte = start;
+      }
+      if (endDate) {
+        const end = typeof endDate === 'string' ? new Date(endDate) : new Date(endDate.getTime());
+        if (typeof endDate === 'string' && !endDate.includes('T')) {
+          end.setUTCHours(23, 59, 59, 999);
+        } else if (end.getUTCHours() === 0 && end.getUTCMinutes() === 0 && end.getUTCSeconds() === 0) {
+          end.setUTCHours(23, 59, 59, 999);
+        }
+        whereTx.executedAt.lte = end;
+      }
     }
 
     const transactions = await this.prisma.transaction.findMany({
@@ -274,6 +305,25 @@ export class AccountsService {
       orderBy: { executedAt: 'desc' },
       take: 100,
     });
+
+    const txList = transactions.map((tx) => ({
+      id: tx.id,
+      referenceNumber: tx.referenceNumber,
+      type: tx.transactionType,
+      direction: tx.sourceAccountId === id ? 'DEBIT' : 'CREDIT',
+      amount: tx.amount,
+      fee: tx.fee,
+      description: tx.description,
+      date: tx.executedAt,
+    }));
+
+    const totalCredit = txList
+      .filter((t) => t.direction === 'CREDIT')
+      .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+
+    const totalDebit = txList
+      .filter((t) => t.direction === 'DEBIT')
+      .reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
     return {
       account: {
@@ -287,16 +337,18 @@ export class AccountsService {
         customerName: `${account.customer.user.firstName} ${account.customer.user.lastName}`,
         branchName: account.branch.name,
       },
-      transactions: transactions.map((tx) => ({
-        id: tx.id,
-        referenceNumber: tx.referenceNumber,
-        type: tx.transactionType,
-        direction: tx.sourceAccountId === id ? 'DEBIT' : 'CREDIT',
-        amount: tx.amount,
-        fee: tx.fee,
-        description: tx.description,
-        date: tx.executedAt,
-      })),
+      period: {
+        startDate: startDate ? (typeof startDate === 'string' ? startDate : startDate.toISOString()) : null,
+        endDate: endDate ? (typeof endDate === 'string' ? endDate : endDate.toISOString()) : null,
+      },
+      summary: {
+        totalCredit,
+        totalDebit,
+        netFlow: totalCredit - totalDebit,
+        transactionCount: txList.length,
+      },
+      transactions: txList,
     };
   }
 }
+

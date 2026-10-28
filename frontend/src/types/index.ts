@@ -261,3 +261,38 @@ export interface Notification {
   isRead: boolean;
   createdAt: string;
 }
+
+export interface CustomerRecord {
+  id: string;
+  userId: string;
+  customerNumber: string;
+  kycStatus: 'UNVERIFIED' | 'PENDING' | 'VERIFIED' | 'REJECTED';
+  taxIdentifier?: string | null;
+  dateOfBirth?: string | null;
+  occupation?: string | null;
+  monthlyIncome?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone?: string | null;
+    status: 'ACTIVE' | 'INACTIVE' | 'LOCKED' | 'SUSPENDED';
+    lastLoginAt?: string | null;
+    createdAt: string;
+  };
+  bankAccounts?: {
+    id: string;
+    accountNumber: string;
+    accountType: 'SAVINGS' | 'CURRENT';
+    status: 'PENDING_APPROVAL' | 'ACTIVE' | 'FROZEN' | 'CLOSED';
+    balance: string;
+    availableBalance: string;
+    branch?: { id: string; code: string; name: string };
+  }[];
+  addresses?: any[];
+  loanApplications?: any[];
+  supportTickets?: any[];
+}

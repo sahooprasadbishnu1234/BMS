@@ -62,14 +62,14 @@ export class LoansController {
   }
 
   @Post('applications/:id/approve')
-  @Roles('BANK_MANAGER', 'BRANCH_MANAGER')
-  @ApiOperation({ summary: 'Branch or Bank Manager grants final loan approval' })
+  @Roles('LOAN_OFFICER', 'BANK_MANAGER', 'BRANCH_MANAGER')
+  @ApiOperation({ summary: 'Loan Officer or Manager approves loan; automatically credits customer account' })
   async approve(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.loansService.approve(id, user);
   }
 
   @Post('applications/:id/disburse')
-  @Roles('BANK_MANAGER', 'BRANCH_MANAGER')
+  @Roles('LOAN_OFFICER', 'BANK_MANAGER', 'BRANCH_MANAGER')
   @ApiOperation({ summary: 'Disburse approved loan to customer account and generate schedule' })
   async disburse(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.loansService.disburse(id, user);

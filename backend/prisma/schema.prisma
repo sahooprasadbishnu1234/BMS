@@ -233,7 +233,7 @@ model BankAccount {
   status           AccountStatus        @default(ACTIVE)
   balance          Decimal              @default(0.0000) @db.Decimal(18, 4)
   availableBalance Decimal              @default(0.0000) @db.Decimal(18, 4)
-  currency         String               @default("USD")
+  currency         String               @default("INR")
   overdraftLimit   Decimal              @default(0.0000) @db.Decimal(18, 4)
   openedAt         DateTime             @default(now())
   closedAt         DateTime?
@@ -301,7 +301,7 @@ model Transaction {
   transactionType        TransactionType
   amount                 Decimal            @db.Decimal(18, 4)
   fee                    Decimal            @default(0.0000) @db.Decimal(18, 4)
-  currency               String             @default("USD")
+  currency               String             @default("INR")
   status                 TransactionStatus  @default(COMPLETED)
   description            String?
   idempotencyKey         String?            @unique

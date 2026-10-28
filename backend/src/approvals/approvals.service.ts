@@ -66,15 +66,22 @@ export class ApprovalsService {
         approval.payload
       ) {
         const payload: any = approval.payload;
-        const source = await tx.bankAccount.findUnique({
-          where: { id: payload.sourceAccountId },
-        });
-        const dest = await tx.bankAccount.findUnique({
-          where: { id: payload.destinationAccountId },
-        });
+        const sourceWhere = payload?.sourceAccountId
+          ? { id: payload.sourceAccountId }
+          : payload?.sourceAccountNumber
+          ? { accountNumber: payload.sourceAccountNumber }
+          : null;
+        const destWhere = payload?.destinationAccountId
+          ? { id: payload.destinationAccountId }
+          : payload?.destinationAccountNumber
+          ? { accountNumber: payload.destinationAccountNumber }
+          : null;
+
+        const source = sourceWhere ? await tx.bankAccount.findUnique({ where: sourceWhere }) : null;
+        const dest = destWhere ? await tx.bankAccount.findUnique({ where: destWhere }) : null;
 
         if (!source || !dest) {
-          throw new NotFoundException('Source or destination account for transfer no longer exists.');
+          throw new NotFoundException('Source or destination account for transfer cannot be resolved or no longer exists.');
         }
 
         const amount = new Decimal(payload.amount);

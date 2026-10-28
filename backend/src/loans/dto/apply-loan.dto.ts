@@ -1,11 +1,16 @@
-import { IsInt, IsNotEmpty, IsNumber, IsString, Max, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class ApplyLoanDto {
-  @ApiProperty({ example: 'PERS-01' })
+  @ApiProperty({ example: 'PERS-01', required: false })
   @IsString()
-  @IsNotEmpty()
-  loanProductCode: string;
+  @IsOptional()
+  loanProductCode?: string;
+
+  @ApiProperty({ example: 'bf993ff9-a343-4898-ab8a-b20c4bf265d9', required: false })
+  @IsString()
+  @IsOptional()
+  loanProductId?: string;
 
   @ApiProperty({ example: 10000.0 })
   @IsNumber()

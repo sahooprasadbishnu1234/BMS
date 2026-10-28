@@ -50,6 +50,23 @@ export class AuthController {
     return this.authService.refreshTokens(refreshDto.refreshToken);
   }
 
+  @Get('demo-customers')
+  @ApiOperation({ summary: 'List all existing customer accounts for front-page quick selection' })
+  async getExistingCustomers() {
+    return this.authService.getExistingCustomers();
+  }
+
+  @Post('customer-quick-login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'One-click login for existing customers from front page' })
+  async customerQuickLogin(
+    @Body('email') email: string,
+    @Ip() ip: string,
+    @Headers('user-agent') userAgent: string,
+  ) {
+    return this.authService.customerQuickLogin(email, ip, userAgent);
+  }
+
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()

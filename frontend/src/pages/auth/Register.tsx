@@ -9,7 +9,7 @@ import { Building2, AlertCircle } from 'lucide-react';
 
 export const Register: React.FC = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, setAuthData } = useAuth();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -23,18 +23,30 @@ export const Register: React.FC = () => {
     setError(null);
     setIsLoading(true);
     try {
-      await api.post('/auth/register', {
-        email,
+      const res = await api.post('/auth/register', {
+        email: email.trim().toLowerCase(),
         password,
-        firstName,
-        lastName,
-        phone,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        phone: phone.trim() || undefined,
       });
-      // Automatically log the new customer in
-      await login(email, password);
+
+      // Automatically store session if registration returned auth tokens
+      if (res.data?.accessToken && res.data?.user) {
+        setAuthData(res.data.user, res.data.accessToken, res.data.refreshToken);
+      } else {
+        await login(email, password);
+      }
       navigate('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Registration failed.');
+      const serverMessage = err.response?.data?.message;
+      if (serverMessage) {
+        setError(serverMessage);
+      } else if (err.message === 'Network Error') {
+        setError('Cannot connect to banking core API. Please ensure the backend server is running.');
+      } else {
+        setError('Registration failed. Please check your information and try again.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -57,9 +69,19 @@ export const Register: React.FC = () => {
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10 px-4">
         <Card className="border border-slate-800 shadow-2xl backdrop-blur-xl">
           {error && (
-            <div className="mb-5 p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center gap-2.5 text-xs text-rose-400">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
+            <div className="mb-5 p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center justify-between gap-2.5 text-xs text-rose-400">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+              {error.toLowerCase().includes('already exists') && (
+                <Link
+                  to="/login"
+                  className="font-bold underline text-primary-400 hover:text-primary-300 ml-2 whitespace-nowrap"
+                >
+                  Sign In
+                </Link>
+              )}
             </div>
           )}
 

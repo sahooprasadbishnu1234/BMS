@@ -14,7 +14,7 @@ import {
   Scale,
   CheckSquare,
   BookOpen,
-  DollarSign,
+  IndianRupee,
   AlertTriangle,
   Settings,
   Activity,
@@ -37,6 +37,7 @@ export const Sidebar: React.FC = () => {
       case 'BANK_MANAGER':
         return [
           { to: '/dashboard', label: 'Executive Dashboard', icon: Activity },
+          { to: '/customers', label: 'Customer Management', icon: Users },
           { to: '/approvals', label: 'Pending Approvals', icon: CheckSquare },
           { to: '/accounts', label: 'All Bank Accounts', icon: Wallet },
           { to: '/branches', label: 'Branch Performance', icon: Building },
@@ -45,14 +46,15 @@ export const Sidebar: React.FC = () => {
       case 'BRANCH_MANAGER':
         return [
           { to: '/dashboard', label: 'Branch Operations', icon: Building },
+          { to: '/customers', label: 'Customer Management', icon: Users },
           { to: '/approvals', label: 'Pending Approvals', icon: CheckSquare },
-          { to: '/teller-reconciliation', label: 'Cash Reconciliation', icon: DollarSign },
+          { to: '/teller-reconciliation', label: 'Cash Reconciliation', icon: IndianRupee },
           { to: '/accounts', label: 'Branch Accounts', icon: Wallet },
           { to: '/loans', label: 'Branch Loans Queue', icon: BadgePercent },
         ];
       case 'BANK_TELLER':
         return [
-          { to: '/dashboard', label: 'Teller Counter', icon: DollarSign },
+          { to: '/dashboard', label: 'Teller Counter', icon: IndianRupee },
           { to: '/deposits', label: 'Cash Deposit', icon: Wallet },
           { to: '/withdrawals', label: 'Cash Withdrawal', icon: ArrowRightLeft },
           { to: '/transactions', label: 'Daily Session History', icon: History },
@@ -67,7 +69,7 @@ export const Sidebar: React.FC = () => {
       case 'LOAN_OFFICER':
         return [
           { to: '/dashboard', label: 'Underwriting Queue', icon: BadgePercent },
-          { to: '/calculator', label: 'Loan EMI Calculator', icon: DollarSign },
+          { to: '/calculator', label: 'Loan EMI Calculator', icon: IndianRupee },
           { to: '/applications', label: 'Credit Applications', icon: FileText },
         ];
       case 'CUSTOMER_SERVICE_OFFICER':
@@ -79,6 +81,7 @@ export const Sidebar: React.FC = () => {
       case 'SYSTEM_ADMINISTRATOR':
         return [
           { to: '/dashboard', label: 'Admin Console', icon: Settings },
+          { to: '/customers', label: 'Customer Management', icon: Users },
           { to: '/users', label: 'IAM User Provisioning', icon: Users },
           { to: '/security-audit', label: 'Security & Access Logs', icon: ShieldCheck },
         ];
@@ -92,7 +95,7 @@ export const Sidebar: React.FC = () => {
         return [
           { to: '/dashboard', label: 'Compliance & AML', icon: AlertTriangle },
           { to: '/cases', label: 'Suspicious Activity (SAR)', icon: ShieldCheck },
-          { to: '/ctr', label: 'Large Cash Reports', icon: DollarSign },
+          { to: '/ctr', label: 'Large Cash Reports', icon: IndianRupee },
         ];
       default:
         return [{ to: '/dashboard', label: 'Dashboard', icon: Activity }];
