@@ -183,6 +183,20 @@ export class AuthService {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const customerNumber = `CUST-${Date.now().toString().slice(-4)}${randomSuffix}`;
     const accountNumber = `100900${randomSuffix}${Math.floor(10 + Math.random() * 90)}`;
+    const targetAccountType = registerDto.accountType || AccountType.SAVINGS;
+    const isSavings = targetAccountType === AccountType.SAVINGS;
+    const depositAmount = registerDto.initialDeposit !== undefined
+      ? Number(registerDto.initialDeposit)
+      : (isSavings ? 500 : 0);
+
+    if (isSavings && depositAmount < 500) {
+      throw new BadRequestException('A minimum initial deposit of ₹500.00 is required to open a Savings Account.');
+    }
+    if (!isSavings && depositAmount < 0) {
+      throw new BadRequestException('Initial deposit for a Current Account cannot be negative.');
+    }
+
+    const availableAmount = isSavings ? Math.max(0, depositAmount - 500) : depositAmount;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -203,54 +217,58 @@ export class AuthService {
         data: {
           userId: user.id,
           customerNumber,
-          kycStatus: KycStatus.VERIFIED,
-          occupation: 'Retail Banking Customer',
-          monthlyIncome: '5000.0000',
+          kycStatus: registerDto.kycStatus || KycStatus.VERIFIED,
+          occupation: registerDto.occupation?.trim() || 'Salaried Professional',
+          monthlyIncome: registerDto.monthlyIncome !== undefined ? Number(registerDto.monthlyIncome).toFixed(4) : '50000.0000',
         },
       });
 
-      // Open initial welcome savings account with ₹500 mandatory deposit
+      // Open initial bank account with selected initial deposit
       const account = await tx.bankAccount.create({
         data: {
           accountNumber,
           customerId: customer.id,
           branchId: defaultBranch.id,
-          accountType: AccountType.SAVINGS,
+          accountType: targetAccountType,
           status: AccountStatus.ACTIVE,
-          balance: '500.0000',
-          availableBalance: '0.0000', // ₹500 is locked as mandatory reserve
+          balance: depositAmount.toFixed(4),
+          availableBalance: availableAmount.toFixed(4),
         },
       });
 
       // Post initial opening balance journal entry
-      const cashVault = await tx.ledgerAccount.findUnique({ where: { code: '1010' } });
-      const customerDepositGL = await tx.ledgerAccount.findUnique({ where: { code: '2010' } });
+      if (depositAmount > 0) {
+        const cashVault = await tx.ledgerAccount.findUnique({ where: { code: '1010' } });
+        const depositGL = await tx.ledgerAccount.findUnique({
+          where: { code: targetAccountType === AccountType.CURRENT ? '2020' : '2010' },
+        });
 
-      if (cashVault && customerDepositGL) {
-        const je = await tx.journalEntry.create({
-          data: {
-            entryNumber: `JE-REG-${Date.now()}`,
-            description: `Initial customer opening deposit: ${customer.customerNumber}`,
-            isBalanced: true,
-            journalLines: {
-              create: [
-                { ledgerAccountId: cashVault.id, entryType: 'DEBIT', amount: '500.0000', memo: 'Welcome cash funding' },
-                { ledgerAccountId: customerDepositGL.id, entryType: 'CREDIT', amount: '500.0000', memo: 'Customer savings balance credit' },
-              ],
+        if (cashVault && depositGL) {
+          const je = await tx.journalEntry.create({
+            data: {
+              entryNumber: `JE-REG-${Date.now()}`,
+              description: `Initial customer opening deposit: ${customer.customerNumber}`,
+              isBalanced: true,
+              journalLines: {
+                create: [
+                  { ledgerAccountId: cashVault.id, entryType: 'DEBIT', amount: depositAmount.toFixed(4), memo: 'Welcome cash funding' },
+                  { ledgerAccountId: depositGL.id, entryType: 'CREDIT', amount: depositAmount.toFixed(4), memo: 'Customer deposit balance credit' },
+                ],
+              },
             },
-          },
-        });
+          });
 
-        await tx.transaction.create({
-          data: {
-            referenceNumber: `TX-REG-${Date.now()}`,
-            destinationAccountId: account.id,
-            transactionType: 'DEPOSIT',
-            amount: '500.0000',
-            status: 'COMPLETED',
-            description: 'New Customer Welcome Initial Deposit (₹500)',
-          },
-        });
+          await tx.transaction.create({
+            data: {
+              referenceNumber: `TX-REG-${Date.now()}`,
+              destinationAccountId: account.id,
+              transactionType: 'DEPOSIT',
+              amount: depositAmount.toFixed(4),
+              status: 'COMPLETED',
+              description: `New Customer Welcome Initial Deposit (₹${depositAmount.toFixed(2)})`,
+            },
+          });
+        }
       }
 
       await tx.auditLog.create({

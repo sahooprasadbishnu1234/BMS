@@ -135,7 +135,11 @@ describe('BMS Enterprise Banking Management System — 17 Mandatory Phase 7 Scen
     return { ...cust, user: usr, bankAccounts: userAccs };
   }
 
-  function updateCustomer(idOrNum: string, dto: { firstName?: string; lastName?: string; phone?: string; occupation?: string }) {
+  function updateCustomer(
+    idOrNum: string,
+    dto: { firstName?: string; lastName?: string; phone?: string; occupation?: string; password?: string },
+    actorRoles: string[] = ['BANK_MANAGER'],
+  ) {
     const cust = customers.find((c) => c.id === idOrNum || c.customerNumber === idOrNum);
     if (!cust) {
       throw new NotFoundException(`Customer ${idOrNum} not found.`);
@@ -145,6 +149,15 @@ describe('BMS Enterprise Banking Management System — 17 Mandatory Phase 7 Scen
     if (dto.lastName) usr.lastName = dto.lastName;
     if (dto.phone) usr.phone = dto.phone;
     if (dto.occupation) cust.occupation = dto.occupation;
+    if (dto.password) {
+      const authorizedRoles = ['BANK_MANAGER', 'BRANCH_MANAGER', 'SYSTEM_ADMINISTRATOR'];
+      if (!actorRoles.some((r) => authorizedRoles.includes(r))) {
+        throw new ForbiddenException(
+          'Customer passwords can only be updated or reset by Bank Managers, Branch Managers, or System Administrators.',
+        );
+      }
+      (usr as any).password = dto.password;
+    }
     return { ...cust, user: usr };
   }
 
@@ -340,6 +353,19 @@ describe('BMS Enterprise Banking Management System — 17 Mandatory Phase 7 Scen
     expect(updated.user.firstName).toBe('Hardik Himanshu');
     expect(updated.user.phone).toBe('+91 9999988888');
     expect(updated.occupation).toBe('Vice Captain');
+
+    // Authority password reset by Bank Manager
+    const withNewPassword = updateCustomer(
+      created.customer.id,
+      { password: 'NewSecurePassword456!' },
+      ['BANK_MANAGER'],
+    );
+    expect((withNewPassword.user as any).password).toBe('NewSecurePassword456!');
+
+    // Authority password reset rejected for unauthorized roles (e.g. CUSTOMER_SERVICE_OFFICER or BANK_TELLER)
+    expect(() =>
+      updateCustomer(created.customer.id, { password: 'HackedPassword999!' }, ['BANK_TELLER']),
+    ).toThrow(ForbiddenException);
   });
 
   // Scenario 6: Handle a nonexistent customer ID

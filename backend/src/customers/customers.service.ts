@@ -321,6 +321,21 @@ export class CustomersService {
     if (dto.phone !== undefined) userData.phone = dto.phone?.trim() || null;
     if (dto.status) userData.status = dto.status;
 
+    if (dto.password) {
+      const authorizedRoles = ['BANK_MANAGER', 'BRANCH_MANAGER', 'SYSTEM_ADMINISTRATOR'];
+      const hasAuthority = actor.roles?.some((r) => authorizedRoles.includes(r));
+      if (!hasAuthority) {
+        throw new ForbiddenException(
+          'Customer passwords can only be updated or reset by Bank Managers, Branch Managers, or System Administrators.',
+        );
+      }
+      userData.passwordHash = await argon2.hash(dto.password, {
+        memoryCost: 65536,
+        timeCost: 3,
+        parallelism: 4,
+      });
+    }
+
     const customerData: any = {};
     if (dto.taxIdentifier !== undefined) customerData.taxIdentifier = dto.taxIdentifier?.trim() || null;
     if (dto.occupation !== undefined) customerData.occupation = dto.occupation?.trim() || null;
@@ -353,13 +368,18 @@ export class CustomersService {
         },
       });
 
+      const auditUpdates = { ...dto };
+      if (auditUpdates.password) {
+        auditUpdates.password = '***REDACTED***';
+      }
+
       await tx.auditLog.create({
         data: {
           actorId: actor.userId,
-          action: 'CUSTOMER_UPDATED',
+          action: dto.password ? 'CUSTOMER_PASSWORD_RESET' : 'CUSTOMER_UPDATED',
           targetEntity: 'Customer',
           targetEntityId: customer.id,
-          metadata: { updates: dto as any },
+          metadata: { updates: auditUpdates as any },
         },
       });
 

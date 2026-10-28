@@ -28,6 +28,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Filter,
+  KeyRound,
+  EyeOff,
+  Lock,
 } from 'lucide-react';
 
 export const CustomerManagement: React.FC = () => {
@@ -56,6 +59,7 @@ export const CustomerManagement: React.FC = () => {
   const [addEmail, setAddEmail] = useState('');
   const [addPhone, setAddPhone] = useState('');
   const [addPassword, setAddPassword] = useState('Password123!');
+  const [showAddPassword, setShowAddPassword] = useState(false);
   const [addOccupation, setAddOccupation] = useState('Salaried Professional');
   const [addMonthlyIncome, setAddMonthlyIncome] = useState('50000');
   const [addKycStatus, setAddKycStatus] = useState<'PENDING' | 'VERIFIED' | 'UNVERIFIED'>('VERIFIED');
@@ -72,8 +76,17 @@ export const CustomerManagement: React.FC = () => {
   const [editMonthlyIncome, setEditMonthlyIncome] = useState('');
   const [editKycStatus, setEditKycStatus] = useState<any>('PENDING');
   const [editStatus, setEditStatus] = useState<any>('ACTIVE');
+  const [editPassword, setEditPassword] = useState('');
+  const [showEditPassword, setShowEditPassword] = useState(false);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // Quick Reset Password State
+  const [isResetPasswordOpen, setIsResetPasswordOpen] = useState(false);
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [isSubmittingResetPassword, setIsSubmittingResetPassword] = useState(false);
+  const [resetPasswordError, setResetPasswordError] = useState<string | null>(null);
 
   // Deactivate State
   const [deactivateReason, setDeactivateReason] = useState('Requested by compliance review');
@@ -119,6 +132,11 @@ export const CustomerManagement: React.FC = () => {
       return;
     }
 
+    if (!addPassword || addPassword.length < 8) {
+      setAddError('Customer password is required and must be at least 8 characters.');
+      return;
+    }
+
     setIsSubmittingAdd(true);
     try {
       const res = await api.post('/customers', {
@@ -126,7 +144,7 @@ export const CustomerManagement: React.FC = () => {
         lastName: addLastName.trim(),
         email: addEmail.trim().toLowerCase(),
         phone: addPhone.trim() || undefined,
-        password: addPassword || 'Password123!',
+        password: addPassword.trim(),
         occupation: addOccupation.trim() || undefined,
         monthlyIncome: addMonthlyIncome ? Number(addMonthlyIncome) : undefined,
         kycStatus: addKycStatus,
@@ -140,11 +158,12 @@ export const CustomerManagement: React.FC = () => {
       setAddEmail('');
       setAddPhone('');
       setAddPassword('Password123!');
-      setAddInitialDeposit('2500');
+      setShowAddPassword(false);
+      setAddInitialDeposit('500');
       setIsAddOpen(false);
 
       setSuccessBanner(
-        `Customer ${res.data.customerNumber} (${res.data.user.firstName} ${res.data.user.lastName}) onboarded successfully! Account #${res.data.bankAccounts?.[0]?.accountNumber || ''} created.`,
+        `Customer ${res.data.customerNumber} (${res.data.user.firstName} ${res.data.user.lastName}) onboarded successfully! Account #${res.data.bankAccounts?.[0]?.accountNumber || ''} created. Customer can now log in with email and password.`,
       );
       setTimeout(() => setSuccessBanner(null), 8000);
 
@@ -165,6 +184,8 @@ export const CustomerManagement: React.FC = () => {
     setEditMonthlyIncome(c.monthlyIncome ? String(Number(c.monthlyIncome)) : '');
     setEditKycStatus(c.kycStatus);
     setEditStatus(c.user.status);
+    setEditPassword('');
+    setShowEditPassword(false);
     setEditError(null);
     setIsEditOpen(true);
   };
@@ -176,7 +197,7 @@ export const CustomerManagement: React.FC = () => {
 
     setIsSubmittingEdit(true);
     try {
-      await api.patch(`/customers/${selectedCustomer.id}`, {
+      const payload: any = {
         firstName: editFirstName.trim(),
         lastName: editLastName.trim(),
         phone: editPhone.trim() || null,
@@ -184,16 +205,65 @@ export const CustomerManagement: React.FC = () => {
         monthlyIncome: editMonthlyIncome ? Number(editMonthlyIncome) : null,
         kycStatus: editKycStatus,
         status: editStatus,
-      });
+      };
+
+      if (editPassword.trim()) {
+        if (editPassword.trim().length < 8) {
+          setEditError('New password must be at least 8 characters long.');
+          setIsSubmittingEdit(false);
+          return;
+        }
+        payload.password = editPassword.trim();
+      }
+
+      await api.patch(`/customers/${selectedCustomer.id}`, payload);
 
       setIsEditOpen(false);
-      setSuccessBanner(`Customer ${selectedCustomer.customerNumber} profile updated successfully.`);
+      setSuccessBanner(`Customer ${selectedCustomer.customerNumber} profile and credentials updated successfully.`);
       setTimeout(() => setSuccessBanner(null), 6000);
       fetchCustomers(page);
     } catch (err: any) {
       setEditError(err.response?.data?.message || 'Failed to update customer profile.');
     } finally {
       setIsSubmittingEdit(false);
+    }
+  };
+
+  const openResetPasswordModal = (c: CustomerRecord) => {
+    setSelectedCustomer(c);
+    setResetPasswordValue('');
+    setShowResetPassword(false);
+    setResetPasswordError(null);
+    setIsResetPasswordOpen(true);
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCustomer) return;
+    setResetPasswordError(null);
+
+    if (!resetPasswordValue || resetPasswordValue.trim().length < 8) {
+      setResetPasswordError('Password must be at least 8 characters long.');
+      return;
+    }
+
+    setIsSubmittingResetPassword(true);
+    try {
+      await api.patch(`/customers/${selectedCustomer.id}`, {
+        password: resetPasswordValue.trim(),
+      });
+
+      setIsResetPasswordOpen(false);
+      setSuccessBanner(
+        `Customer ${selectedCustomer.customerNumber} (${selectedCustomer.user.firstName} ${selectedCustomer.user.lastName}) password updated successfully by Bank Authority.`,
+      );
+      setTimeout(() => setSuccessBanner(null), 7000);
+    } catch (err: any) {
+      setResetPasswordError(
+        err.response?.data?.message || 'Failed to update customer password.',
+      );
+    } finally {
+      setIsSubmittingResetPassword(false);
     }
   };
 
@@ -448,6 +518,14 @@ export const CustomerManagement: React.FC = () => {
                           </button>
                           <button
                             type="button"
+                            onClick={() => openResetPasswordModal(c)}
+                            title="Reset Customer Password (Bank Manager / Admin)"
+                            className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-amber-400 hover:border-amber-500/30 transition-colors"
+                          >
+                            <KeyRound className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => openDeactivateModal(c)}
                             title="Suspend Customer"
                             className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 hover:text-rose-400 hover:border-rose-500/30 transition-colors"
@@ -567,6 +645,37 @@ export const CustomerManagement: React.FC = () => {
                 onChange={(e) => setAddMonthlyIncome(e.target.value)}
                 placeholder="50000"
               />
+            </div>
+
+            <div className="p-3 bg-slate-900/60 border border-slate-800 rounded-xl space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider">
+                  Password (Customer Login) *
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowAddPassword(!showAddPassword)}
+                  className="text-[11px] text-primary-400 hover:text-primary-300 font-medium flex items-center gap-1"
+                >
+                  {showAddPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  <span>{showAddPassword ? 'Hide Password' : 'Show Password'}</span>
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type={showAddPassword ? 'text' : 'password'}
+                  value={addPassword}
+                  onChange={(e) => setAddPassword(e.target.value)}
+                  placeholder="Enter customer login password (min 8 chars)"
+                  minLength={8}
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-primary-500 font-mono text-xs"
+                />
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-slate-400">
+                <span>Customer will log in with their email address and this password</span>
+                <span className="font-mono text-slate-500">Default: Password123!</span>
+              </div>
             </div>
 
             <div className="p-3.5 bg-slate-900/80 border border-slate-800 rounded-xl space-y-3">
@@ -735,6 +844,46 @@ export const CustomerManagement: React.FC = () => {
                 <option value="SUSPENDED">SUSPENDED (Locked)</option>
                 <option value="INACTIVE">INACTIVE</option>
               </select>
+            </div>
+
+            {/* Password Reset Section for Bank Authority */}
+            <div className="p-3 bg-slate-900/90 border border-slate-800 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span>Update Password (Authority Only)</span>
+                </label>
+                {editPassword && (
+                  <button
+                    type="button"
+                    onClick={() => setEditPassword('')}
+                    className="text-[10px] text-slate-400 hover:text-slate-200 underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className="relative flex items-center">
+                <input
+                  type={showEditPassword ? 'text' : 'password'}
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  placeholder="Leave empty to keep unchanged (min 8 chars to update)"
+                  minLength={8}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 pr-10 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-primary-500 font-mono text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowEditPassword(!showEditPassword)}
+                  className="absolute right-3 text-slate-400 hover:text-slate-200 transition-colors"
+                  title={showEditPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showEditPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Authorized Bank Managers and Admins can update or reset the customer's login password.
+              </p>
             </div>
 
             <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-800">
@@ -913,6 +1062,105 @@ export const CustomerManagement: React.FC = () => {
                 isLoading={isSubmittingDeactivate}
               >
                 Confirm Suspension
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* MODAL 5: QUICK RESET PASSWORD (BANK AUTHORITY) */}
+      {isResetPasswordOpen && selectedCustomer && (
+        <Modal
+          isOpen={true}
+          onClose={() => !isSubmittingResetPassword && setIsResetPasswordOpen(false)}
+          title={`Reset Customer Password: ${selectedCustomer.customerNumber}`}
+          maxWidth="md"
+        >
+          {resetPasswordError && (
+            <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl flex items-center gap-2 text-xs text-rose-400">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{resetPasswordError}</span>
+            </div>
+          )}
+
+          <div className="mb-4 p-3.5 bg-slate-900 border border-slate-800 rounded-xl text-xs space-y-1.5">
+            <div className="flex justify-between items-center text-slate-300">
+              <span>Customer:</span>
+              <span className="font-semibold text-slate-100">
+                {selectedCustomer.user.firstName} {selectedCustomer.user.lastName}
+              </span>
+            </div>
+            <div className="flex justify-between items-center text-slate-300">
+              <span>Login Email:</span>
+              <span className="font-mono text-primary-400">{selectedCustomer.user.email}</span>
+            </div>
+            <div className="flex justify-between items-center text-slate-300">
+              <span>Account Number:</span>
+              <span className="font-mono text-slate-400">{selectedCustomer.customerNumber}</span>
+            </div>
+          </div>
+
+          <form onSubmit={handleResetPasswordSubmit} className="space-y-4 text-xs">
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">
+                  New Password *
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowResetPassword(!showResetPassword)}
+                  className="text-[11px] text-primary-400 hover:text-primary-300 font-medium flex items-center gap-1"
+                >
+                  {showResetPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  <span>{showResetPassword ? 'Hide Password' : 'Show Password'}</span>
+                </button>
+              </div>
+
+              <div className="relative">
+                <input
+                  type={showResetPassword ? 'text' : 'password'}
+                  value={resetPasswordValue}
+                  onChange={(e) => setResetPasswordValue(e.target.value)}
+                  placeholder="Enter new password (min 8 characters)"
+                  minLength={8}
+                  required
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-primary-500 font-mono text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-[10px] text-slate-400">Authority reset: Min 8 characters</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const generated = 'ApexPass@' + Math.floor(1000 + Math.random() * 9000);
+                    setResetPasswordValue(generated);
+                    setShowResetPassword(true);
+                  }}
+                  className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold underline"
+                >
+                  Generate Random Password
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setIsResetPasswordOpen(false)}
+                disabled={isSubmittingResetPassword}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                isLoading={isSubmittingResetPassword}
+              >
+                Update Customer Password
               </Button>
             </div>
           </form>

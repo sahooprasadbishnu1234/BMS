@@ -3,6 +3,7 @@ import {
   IsString,
   IsNumber,
   IsEnum,
+  MinLength,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { KycStatus, UserStatus } from '@prisma/client';
@@ -23,6 +24,12 @@ export class UpdateCustomerDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @ApiProperty({ example: 'NewPassword123!', required: false })
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  password?: string;
 
   @ApiProperty({ example: 'PAN1234567X', required: false })
   @IsOptional()
